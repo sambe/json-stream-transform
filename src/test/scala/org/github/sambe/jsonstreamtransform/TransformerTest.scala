@@ -5,6 +5,7 @@ import java.io.{ByteArrayOutputStream, ByteArrayInputStream}
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.node.{ArrayNode, ObjectNode}
 import scala.collection.JavaConverters.iterableAsScalaIterableConverter
+import org.github.sambe.jsonstreamtransform.dsl.MatcherDsl._
 
 class TransformerTest {
 
@@ -38,10 +39,10 @@ class TransformerTest {
 
   @Test
   def testRename {
-    val rename1 = RenameAttribute("name", "firstName")
-    val rename2 = Matcher("employer", Seq(Matcher("locations", Seq(Matcher("*", Seq(), Seq(RenameAttribute("place", "placeName")))))))
-    val matcher = Matcher("<root>", Seq(rename2), Seq(rename1))
-    val t = new Transform(matcher)
+    val t = / (
+      RenameAttribute("name", "firstName"),
+      "employer" / "locations" / "*" / RenameAttribute("place", "placeName")
+    ).toTransform
 
     val expectedJson = """{
                          |  "firstName" : "Samuel",
@@ -67,10 +68,10 @@ class TransformerTest {
 
   @Test
   def testRemove {
-    val remove1 = RemoveAttribute("age")
-    val remove2 = Matcher("employer", Seq(), Seq(RemoveAttribute("locations")))
-    val matcher = Matcher("<root>", Seq(remove2), Seq(remove1))
-    val t = new Transform(matcher)
+    val t = /(
+      RemoveAttribute("age"),
+      "employer" / RemoveAttribute("locations")
+    ).toTransform
 
     val expectedJson = """{
                          |  "name" : "Samuel",
@@ -88,9 +89,7 @@ class TransformerTest {
 
   @Test
   def testRemoveLevel {
-    val removeLevel = Matcher("employer", Seq(Matcher("locations", Seq(Matcher("*", Seq(), Seq(RemoveLevel("place")))))))
-    val matcher = Matcher("<root>", Seq(removeLevel))
-    val t = new Transform(matcher)
+    val t = /( "employer" / "locations" / "*" / RemoveLevel("place")).toTransform
 
     val expectedJson = """{
                          |  "name" : "Samuel",
@@ -110,14 +109,14 @@ class TransformerTest {
 
   @Test
   def testInsertAttribute {
-    val insert1 = InsertAttribute("criminalRecord", false)
-    val insert2 = InsertAttribute("profession", "Software Developer")
-    val insert3 = Matcher("employer", Seq(Matcher("locations", Seq(
-      Matcher("1", Seq(), Seq(InsertAttribute("countryCode", "CH"))),
-      Matcher("2", Seq(), Seq(InsertAttribute("countryCode", "HK")))
-    ))))
-    val matcher = Matcher("<root>", Seq(insert3), Seq(insert1, insert2))
-    val t = new Transform(matcher)
+    val t = /(
+      InsertAttribute("criminalRecord", false),
+      InsertAttribute("profession", "Software Developer"),
+      "employer" / "locations" / (
+        "1" / InsertAttribute("countryCode", "CH"),
+        "2" / InsertAttribute("countryCode", "HK")
+        )
+    ).toTransform
 
     val expectedJson = """{
                          |  "name" : "Samuel",
@@ -147,12 +146,11 @@ class TransformerTest {
 
   @Test
   def testConditionalRemove {
-    def removeFilter(jsonNode: JsonNode): Boolean = jsonNode match {
-      case on: ObjectNode => on.get("employees").asInt() < 50
-    }
-    val remove = Matcher("employer", Seq(Matcher("locations", Seq(Matcher("*", Seq(), Seq(RemoveAttribute("employees")), Some(removeFilter))))))
-    val matcher = Matcher("<root>", Seq(remove))
-    val t = new Transform(matcher)
+    val t = /(
+      "employer" / "locations" / "*" / condition(_.get("employees").asInt() < 50) / (
+        RemoveAttribute("employees")
+      )
+    ).toTransform
 
     val expectedJson = """{
                          |  "name" : "Samuel",
@@ -177,12 +175,9 @@ class TransformerTest {
 
   @Test
   def testConditionalRename {
-    def renameFilter(jsonNode: JsonNode): Boolean = jsonNode match {
-      case on: ObjectNode => on.get("place").asText() != "Zurich"
-    }
-    val rename = Matcher("employer", Seq(Matcher("locations", Seq(Matcher("*", Seq(), Seq(RenameAttribute("employees", "minions")), Some(renameFilter))))))
-    val matcher= Matcher("<root>", Seq(rename))
-    val t = new Transform(matcher)
+    val t = /(
+      "employer" / "locations" / "*" / condition(_.get("place").asText != "Zurich") / RenameAttribute("employees", "minions")
+    ).toTransform
 
     val expectedJson = """{
                          |  "name" : "Samuel",
@@ -208,12 +203,9 @@ class TransformerTest {
 
   @Test
   def testConditionalInsert {
-    def insertFilter(jsonNode: JsonNode): Boolean = jsonNode match {
-      case on: ObjectNode => on.get("employees").asInt() > 200
-    }
-    val insert = Matcher("employer", Seq(Matcher("locations", Seq(Matcher("*", Seq(), Seq(InsertAttribute("crowded", true)), Some(insertFilter))))))
-    val matcher = Matcher("<root>", Seq(insert))
-    val t = new Transform(matcher)
+    val t = /(
+      "employer" / "locations" / "*" / condition(_.get("employees").asInt() > 200) /InsertAttribute("crowded", true)
+    ).toTransform
 
     val expectedJson = """{
                          |  "name" : "Samuel",
@@ -246,11 +238,12 @@ class TransformerTest {
         case an: ArrayNode => an.asScala.exists(_.asText == "French")
       }
     }
-    // removing name of employer before removing level in order to prevent it from overwriting the top level name attribute
-    val removeName = Matcher("employer", Seq(), Seq(RemoveAttribute("name")))
-    val removeLevel = RemoveLevel("employer")
-    val matcher = Matcher("<root>", Seq(removeName), Seq(removeLevel), Some(removeLevelFilter))
-    val t = new Transform(matcher)
+
+    // This example has a condition on the root matcher which is normally not supported
+    val t = new Transform(/ (
+      "employer" / RemoveAttribute("name"),
+      RemoveLevel("employer")
+    ).build.copy(condition = Some(removeLevelFilter)))
 
     val expectedJson = """{
                          |  "name" : "Samuel",
