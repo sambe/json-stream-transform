@@ -47,30 +47,48 @@ class Transform(matcher: Matcher) {
         g.writeFieldName(fieldCopyName)
       }
       val fieldMatcher = subMatcher(matcher, fieldName)
-      val valueCopy = fieldCopy || removeLevelInner.exists(_ == fieldName)
+      val replaceValue = matchTransformer(fieldMatcher){case ReplaceValue(value) => value}
+      replaceValue.foreach(streamWriteValue(_, fieldName))
+      val valueCopy = (fieldCopy || removeLevelInner.exists(_ == fieldName)) && !replaceValue.isDefined
       transformValue(fieldMatcher, valueCopy)
     }
     val inserts = matchTransformers(matcher){case ia: InsertAttribute => ia }
     inserts.foreach { ia =>
       g.writeFieldName(ia.name)
-      ia.value match {
-        case s: String => g.writeString(s)
-        case i: Int => g.writeNumber(i)
-        case l: Long => g.writeNumber(l)
-        case bi: BigInt => g.writeNumber(bi.bigInteger)
-        case bi: java.math.BigInteger => g.writeNumber(bi)
-        case bd: BigDecimal => g.writeNumber(bd.bigDecimal)
-        case bd: java.math.BigDecimal => g.writeNumber(bd)
-        case d: Double => g.writeNumber(d)
-        case f: Float => g.writeNumber(f)
-        case b: Boolean => g.writeBoolean(b)
-        case null => g.writeNull()
-        case tn: TreeNode => g.writeTree(tn)
-        case other => sys.error("value type of attribute %s not supported: %s" format (ia.name, other.getClass.toString))
-      }
+      streamWriteValue(ia.value, ia.name)
     }
     if (copyThis)
       g.writeEndObject()
+  }
+
+  private def streamWriteValue(value: Any, name: String)(implicit g: JsonGenerator) {
+    value match {
+      case s: String => g.writeString(s)
+      case i: Int => g.writeNumber(i)
+      case l: Long => g.writeNumber(l)
+      case bi: BigInt => g.writeNumber(bi.bigInteger)
+      case bi: java.math.BigInteger => g.writeNumber(bi)
+      case bd: BigDecimal => g.writeNumber(bd.bigDecimal)
+      case bd: java.math.BigDecimal => g.writeNumber(bd)
+      case d: Double => g.writeNumber(d)
+      case f: Float => g.writeNumber(f)
+      case b: Boolean => g.writeBoolean(b)
+      case null => g.writeNull()
+      case s: Seq[_] =>
+        g.writeStartArray()
+        s.foreach(streamWriteValue(_, name))
+        g.writeEndArray()
+      case m: Map[_,_] =>
+        g.writeStartObject()
+        m.foreach { case (k,v) =>
+          val fieldName = k.toString
+          g.writeFieldName(fieldName)
+          streamWriteValue(v, fieldName)
+        }
+        g.writeEndObject()
+      case tn: TreeNode => g.writeTree(tn)
+      case other => sys.error("value type of attribute %s not supported: %s" format (name, other.getClass.toString))
+    }
   }
 
   private def createJsonNode(value: Any): JsonNode = {
@@ -87,6 +105,18 @@ class Transform(matcher: Matcher) {
       case b: Boolean => nodeFactory.booleanNode(b)
       case null => nodeFactory.nullNode()
       case jn: JsonNode => jn
+      case s: Seq[_] =>
+        val an = nodeFactory.arrayNode()
+        s.foreach { e =>
+          an.add(createJsonNode(e))
+        }
+        an
+      case m: Map[_,_] =>
+        val on = nodeFactory.objectNode()
+        m.foreach { case (k,v) =>
+          on.set(k.toString, createJsonNode(v))
+        }
+        on
       case other => sys.error("value type not supported: %s" format other.getClass.toString)
     }
   }
@@ -97,83 +127,94 @@ class Transform(matcher: Matcher) {
     g.writeTree(tree)
   }
 
-  private def transformObjectTree(matcher: Matcher)(tree: JsonNode) {
+  private def transformObjectTree(matcher: Matcher)(tree: JsonNode): JsonNode = {
     // only do something if the condition is true (if there is one on this level)
     if (matcher.condition.map(_(tree)).getOrElse(true)) {
-      // 1) recursive matching
-      matcher.subMatchers.map { m =>
-        tree match {
-          case an: ArrayNode =>
-            if (m.pattern == "*") {
-              an.asScala.foreach(transformObjectTree(m)(_))
-            } else {
-              val index: Int = safeToInt(m.pattern).getOrElse(sys.error("matcher of array is neither '*' nor a valid number: " + m.pattern))
-              transformArrayNodeElement(m, index)(an)
-            }
-          case on: ObjectNode =>
-            if (m.pattern == "*") {
-              on.fieldNames().asScala.foreach { fieldName =>
-                transformObjectNodeField(m, fieldName)(on)
+      val replaceValue = matchTransformer(Some(matcher)){case ReplaceValue(value) => value}
+      replaceValue.map { v =>
+        createJsonNode(v)
+      } getOrElse {
+        // 1) recursive matching
+        matcher.subMatchers.map { m =>
+          tree match {
+            case an: ArrayNode =>
+              if (m.pattern == "*") {
+                an.asScala.zipWithIndex.foreach { case (node, i) =>
+                  val updated = transformObjectTree(m)(node)
+                  if (updated != node) an.set(i, updated)
+                }
+              } else {
+                val index: Int = safeToInt(m.pattern).getOrElse(sys.error("matcher of array is neither '*' nor a valid number: " + m.pattern))
+                transformArrayNodeElement(m, index)(an)
               }
-            } else {
-              transformObjectNodeField(m, m.pattern)(on)
-            }
-          case _ =>
-            // no match
-            None
+            case on: ObjectNode =>
+              if (m.pattern == "*") {
+                on.fieldNames().asScala.foreach { fieldName =>
+                  transformObjectNodeField(m, fieldName)(on)
+                }
+              } else {
+                transformObjectNodeField(m, m.pattern)(on)
+              }
+            case _ =>
+              // no match
+              None
+          }
         }
-      }
-      // 2) applying transformers at this level
-      matcher.transformers.foreach {
-        case RenameAttribute(oldName, newName) =>
-          onlyIfObjectNode(tree) { on =>
-            val value = on.remove(oldName)
-            if (value != null)
-              on.set(newName, value)
-          }
-        case RemoveAttribute(name) =>
-          onlyIfObjectNode(tree) { on =>
-            on.remove(name)
-          }
-        case InsertAttribute(name, value) =>
-          onlyIfObjectNode(tree) { on =>
-            val jsonValue = createJsonNode(value)
-            on.set(name, jsonValue)
-          }
-        case RemoveLevel(inner) =>
-          onlyIfObjectNode(tree) { on =>
-            val innerValue = on.get(inner)
-            onlyIfObjectNode(innerValue) { innerNode =>
-              innerNode.fieldNames().asScala.foreach { fieldName =>
-                on.set(fieldName, innerNode.get(fieldName))
-              }
+        // 2) applying transformers at this level
+        matcher.transformers.foreach {
+          case ReplaceValue(value) =>
+            sys.error("should never get to this point, because replacing earlier")
+          case RenameAttribute(oldName, newName) =>
+            onlyIfObjectNode(tree) { on =>
+              val value = on.remove(oldName)
+              if (value != null)
+                on.set(newName, value)
             }
-            on.remove(inner)
-          }
+          case RemoveAttribute(name) =>
+            onlyIfObjectNode(tree) { on =>
+              on.remove(name)
+            }
+          case InsertAttribute(name, value) =>
+            onlyIfObjectNode(tree) { on =>
+              val jsonValue = createJsonNode(value)
+              on.set(name, jsonValue)
+            }
+          case RemoveLevel(inner) =>
+            onlyIfObjectNode(tree) { on =>
+              val innerValue = on.get(inner)
+              onlyIfObjectNode(innerValue) { innerNode =>
+                innerNode.fieldNames().asScala.foreach { fieldName =>
+                  on.set(fieldName, innerNode.get(fieldName))
+                }
+              }
+              on.remove(inner)
+            }
+        }
+        tree
       }
-    }
+    } else tree
   }
 
-  private def transformArrayNodeElement(m: Matcher, index: Int)(an: ArrayNode) {
+  private def transformArrayNodeElement(m: Matcher, index: Int)(an: ArrayNode): ArrayNode = {
     if (index >= 1 || index <= an.size()) {
 
       val v = an.get(index)
-      transformObjectTree(m)(v)
-      //val transformed = transformObjectTree(m)(v)
-      //an.set(index, transformed)
-    }
+      val updated = transformObjectTree(m)(v)
+      if (updated != m)
+        an.set(index, updated)
+      an
+    } else an
   }
 
   private def transformObjectNodeField(m: Matcher, fieldName: String)(on: ObjectNode) {
     if (on.has(fieldName)) {
-      val v = on.get(m.pattern)
+      val v = on.get(fieldName)
       if (v != null) {
-        transformObjectTree(m)(v)
-        //val transformed = transformObjectTree(m)(v)
-        //on.replace(m.pattern, transformed)
+        val updated = transformObjectTree(m)(v)
+        if (updated != v)
+          on.replace(fieldName, updated)
       }
     }
-
   }
 
   private def subMatcher(matcher: Option[Matcher], name: String): Option[Matcher] = {

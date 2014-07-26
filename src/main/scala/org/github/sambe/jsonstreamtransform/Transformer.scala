@@ -5,6 +5,7 @@ import com.fasterxml.jackson.core.TreeNode
 
 sealed trait Transformer
 
+case class ReplaceValue(value: Any) extends Transformer
 case class RenameAttribute(oldName: String, newName: String) extends Transformer
 case class RemoveAttribute(name: String) extends Transformer
 case class InsertAttribute(name: String, value: Any) extends Transformer

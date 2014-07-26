@@ -3,7 +3,7 @@ package org.github.sambe.jsonstreamtransform
 import org.junit.{Assert, Test}
 import java.io.{ByteArrayOutputStream, ByteArrayInputStream}
 import com.fasterxml.jackson.databind.JsonNode
-import com.fasterxml.jackson.databind.node.{ArrayNode, ObjectNode}
+import com.fasterxml.jackson.databind.node.{JsonNodeFactory, ArrayNode, ObjectNode}
 import scala.collection.JavaConverters.iterableAsScalaIterableConverter
 import org.github.sambe.jsonstreamtransform.dsl.MatcherDsl._
 
@@ -259,6 +259,100 @@ class TransformerTest {
                          |    "employees" : 25
                          |  } ]
                          |}""".stripMargin
+
+    val outputJson = transform(t, inputJson)
+    Assert.assertEquals(expectedJson, outputJson)
+  }
+
+  @Test
+  def testReplaceValue {
+    val v = Map("SWX" -> true, "NYSE" -> false)
+    val t = /( "employer" / "listed" / ReplaceValue(v)).toTransform
+
+    val expectedJson =
+      """{
+        |  "name" : "Samuel",
+        |  "age" : 29,
+        |  "married" : false,
+        |  "languages" : [ "English", "German", "Spanish", "French" ],
+        |  "employer" : {
+        |    "name" : "Leonteq Securities AG",
+        |    "listed" : {
+        |      "SWX" : true,
+        |      "NYSE" : false
+        |    },
+        |    "locations" : [ {
+        |      "place" : "Zurich",
+        |      "employees" : 250
+        |    }, {
+        |      "place" : "Hong Kong",
+        |      "employees" : 25
+        |    } ]
+        |  }
+        |}""".stripMargin
+
+    val outputJson = transform(t, inputJson)
+    Assert.assertEquals(expectedJson, outputJson)
+  }
+
+  @Test
+  def testReplaceValueConditionally1 {
+    val v = Map("SWX" -> true, "NYSE" -> false)
+    val t = /( "employer" / "listed" / condition(_.asBoolean()) / ReplaceValue(v)).toTransform
+
+    val expectedJson =
+      """{
+        |  "name" : "Samuel",
+        |  "age" : 29,
+        |  "married" : false,
+        |  "languages" : [ "English", "German", "Spanish", "French" ],
+        |  "employer" : {
+        |    "name" : "Leonteq Securities AG",
+        |    "listed" : {
+        |      "SWX" : true,
+        |      "NYSE" : false
+        |    },
+        |    "locations" : [ {
+        |      "place" : "Zurich",
+        |      "employees" : 250
+        |    }, {
+        |      "place" : "Hong Kong",
+        |      "employees" : 25
+        |    } ]
+        |  }
+        |}""".stripMargin
+
+    val outputJson = transform(t, inputJson)
+    Assert.assertEquals(expectedJson, outputJson)
+  }
+
+  @Test
+  def testReplaceValueConditionally2 {
+    val v = Map("SWX" -> true, "NYSE" -> false)
+    val t = /( "employer" / condition(_.get("name").asText().startsWith("Leonteq")) /
+      "listed" / ReplaceValue(v)).toTransform
+
+    val expectedJson =
+      """{
+        |  "name" : "Samuel",
+        |  "age" : 29,
+        |  "married" : false,
+        |  "languages" : [ "English", "German", "Spanish", "French" ],
+        |  "employer" : {
+        |    "name" : "Leonteq Securities AG",
+        |    "listed" : {
+        |      "SWX" : true,
+        |      "NYSE" : false
+        |    },
+        |    "locations" : [ {
+        |      "place" : "Zurich",
+        |      "employees" : 250
+        |    }, {
+        |      "place" : "Hong Kong",
+        |      "employees" : 25
+        |    } ]
+        |  }
+        |}""".stripMargin
 
     val outputJson = transform(t, inputJson)
     Assert.assertEquals(expectedJson, outputJson)
