@@ -6,16 +6,16 @@
 - And you don't like to write custom migration code each time a little detail changes in your data model.
 - You use Scala (or you are not afraid of it)
 
-## Then json-stream-transform might be the core component to solve your problem.
+**Then json-stream-transform might be the core component to solve your problem.**
 
-## Json-stream-transform is
+## Json-stream-transform is...
 - Easy to use, thanks to its DSL for specifying the mutations
 - Easy to integrate, pure Scala code
 - Based on fast Jackson JSON parser and writer
 - It applies all modifications while streaming through the document
 - Suitable for very large JSON documents (>100MB), which cannot be processed by other tools that parse the whole document into a tree.
 
-# Example 1: Renaming two attributes
+## Example 1: Renaming two attributes
 
 A transform specified in the DSL, contains mutations like RenameAttribute, which are Scala case classes. And it also
 contains information where to apply the mutation. E.g. the first RenameAttribute in below example is applied on the top
@@ -30,3 +30,5 @@ case, mean that the mutation shall be applied to all elements of an array.
     
     t.transform(inputStream, outputStream)
 ```
+
+For many more examples, please  [check out the unit tests](https://github.com/sambe/json-stream-transform/blob/master/src/test/scala/com/github/sambe/jsonstreamtransform/TransformerTest.scala)!
