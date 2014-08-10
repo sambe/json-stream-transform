@@ -35,28 +35,77 @@ class Transform(matcher: Matcher) {
   }
 
   private def transformObjectStream(matcher: Option[Matcher], copy: Boolean)(implicit p: JsonParser, g: JsonGenerator) {
+    // object start
     val removeLevelInner = matchTransformer(matcher){case RemoveLevel(inner) => inner}
     val copyThis = copy && !removeLevelInner.isDefined
     if (copyThis)
       g.writeStartObject()
+
+    // TODO - add error detection for wrong insert levels (if there is not both start and end)
+    //      - rewrite matcher structure to have sub matchers for the different insert possibilities
+    //      - add memo effect on local level (to detect which elements came before)
+    //      - add generic internal mutators: capture & release to implement move operations
+    //          (move = capture + release + check if both happened): the first writes it in, the second ticks it off, the check will alert if something hasn't been ticked off
+
+    // before fields
+    if (copyThis) {
+      val closeInsertLevel = matchTransformer(matcher) { case InsertLevel(name, _, Start) => name}
+      closeInsertLevel.foreach(name => g.writeEndObject())
+      val insertLevelName = matchTransformer(matcher) { case InsertLevel(name, Start, _) => name}
+      insertLevelName.foreach(name => g.writeObjectFieldStart(name))
+    }
+
+    // existing fields
     while(p.nextToken != JsonToken.END_OBJECT) {
       val fieldName = p.getCurrentName
-      val fieldCopy = copyThis && matchTransformer(matcher){case RemoveAttribute(`fieldName`) => false}.getOrElse(true)
+
+      // before field
+      if (copyThis) {
+        val closeInsertLevel = matchTransformer(matcher) { case InsertLevel(name, _, Before(`fieldName`)) => name}
+        closeInsertLevel.foreach(name => g.writeEndObject())
+        val insertLevelName = matchTransformer(matcher) { case InsertLevel(name, Before(`fieldName`), _) => name}
+        insertLevelName.foreach(name => g.writeObjectFieldStart(name))
+      }
+
+      // field name
+      val fieldCopy = copyThis && matchTransformer(matcher) { case RemoveAttribute(`fieldName`) => false}.getOrElse(true)
       if (fieldCopy) {
-        val fieldCopyName = matchTransformer(matcher){case RenameAttribute(`fieldName`,newName) => newName}.getOrElse(fieldName)
+        val fieldCopyName = matchTransformer(matcher) { case RenameAttribute(`fieldName`, newName) => newName}.getOrElse(fieldName)
         g.writeFieldName(fieldCopyName)
       }
+
+      // field value
       val fieldMatcher = subMatcher(matcher, fieldName)
       val replaceValue = matchTransformer(fieldMatcher){case ReplaceValue(value) => value}
       replaceValue.foreach(streamWriteValue(_, fieldName))
       val valueCopy = (fieldCopy || removeLevelInner.exists(_ == fieldName)) && !replaceValue.isDefined
       transformValue(fieldMatcher, valueCopy)
+
+      // after field
+      if (copyThis) {
+        val closeInsertLevelAfter = matchTransformer(matcher) { case InsertLevel(name, _, After(`fieldName`)) => name}
+        closeInsertLevelAfter.foreach(name => g.writeEndObject())
+        val insertLevelNameAfter = matchTransformer(matcher) { case InsertLevel(name, After(`fieldName`), _) => name}
+        insertLevelNameAfter.foreach(name => g.writeObjectFieldStart(name))
+      }
     }
+
+    // new fields
     val inserts = matchTransformers(matcher){case ia: InsertAttribute => ia }
     inserts.foreach { ia =>
       g.writeFieldName(ia.name)
       streamWriteValue(ia.value, ia.name)
     }
+
+    // after fields
+    if (copyThis) {
+      val closeInsertLevel = matchTransformer(matcher) { case InsertLevel(name, _, End) => name}
+      closeInsertLevel.foreach(name => g.writeEndObject())
+      val insertLevelName = matchTransformer(matcher) { case InsertLevel(name, End, _) => name}
+      insertLevelName.foreach(name => g.writeObjectFieldStart(name))
+    }
+
+    // object end
     if (copyThis)
       g.writeEndObject()
   }
@@ -161,7 +210,7 @@ class Transform(matcher: Matcher) {
           }
         }
         // 2) applying transformers at this level
-        matcher.transformers.foreach {
+        matcher.mutators.foreach {
           case ReplaceValue(value) =>
             sys.error("should never get to this point, because replacing earlier")
           case RenameAttribute(oldName, newName) =>
@@ -181,13 +230,38 @@ class Transform(matcher: Matcher) {
             }
           case RemoveLevel(inner) =>
             onlyIfObjectNode(tree) { on =>
-              val innerValue = on.get(inner)
+              val innerValue = on.remove(inner)
               onlyIfObjectNode(innerValue) { innerNode =>
                 innerNode.fieldNames().asScala.foreach { fieldName =>
                   on.set(fieldName, innerNode.get(fieldName))
                 }
               }
-              on.remove(inner)
+            }
+          case InsertLevel(newLevelName, from, to) =>
+            onlyIfObjectNode(tree) { on =>
+              val fieldNames = on.fieldNames().asScala.toIndexedSeq
+              def index(l: Location) = l match {
+                case Start => 0
+                case Before(name) => fieldNames.indexOf(name)
+                case After(name) =>
+                  val i = fieldNames.indexOf(name)
+                  if (i == -1) -1 else i+1
+                case End => fieldNames.size
+              }
+              val fromIndex = index(from)
+              val toIndex = index(to)
+              if (fromIndex == -1) sys.error("insert level: couldn't find \"from\" %s in field names: %s" format (from, fieldNames))
+              if (toIndex == -1) sys.error("insert level: couldn't find \"to\" %s in field names: %s" format (to, fieldNames))
+              val newLevel = nodeFactory.objectNode()
+              fieldNames.zipWithIndex.foreach { case (name,i) =>
+                val v = on.remove(name)
+                if (i == fromIndex) // insert newLevel in correct order with other fields
+                  on.set(newLevelName, newLevel)
+                if (i >= fromIndex && i < toIndex)
+                  newLevel.set(name, v)
+                else
+                  on.set(name, v)
+              }
             }
         }
         tree
@@ -221,12 +295,12 @@ class Transform(matcher: Matcher) {
     matcher.flatMap(m => m.subMatchers.find(_.pattern == name).orElse(m.subMatchers.find(_.pattern == "*")))
   }
 
-  private def matchTransformer[A](matcher: Option[Matcher])(select: PartialFunction[Transformer, A]): Option[A] = {
+  private def matchTransformer[A](matcher: Option[Matcher])(select: PartialFunction[Mutator, A]): Option[A] = {
     matchTransformers(matcher)(select).headOption
   }
 
-  private def matchTransformers[A](matcher: Option[Matcher])(select: PartialFunction[Transformer, A]): Seq[A] = {
-    matcher.toList.flatMap(_.transformers.collect(select))
+  private def matchTransformers[A](matcher: Option[Matcher])(select: PartialFunction[Mutator, A]): Seq[A] = {
+    matcher.toList.flatMap(_.mutators.collect(select))
   }
 
   private def transformValue(matcher: Option[Matcher], copy: Boolean)(implicit p: JsonParser, g: JsonGenerator) {
@@ -266,18 +340,5 @@ class Transform(matcher: Matcher) {
         os.close()
       } catch { case _: IOException => }
     }
-  }
-}
-
-object Transform {
-
-  def main(args: Array[String]) {
-    val rename1 = Matcher("results", Seq(Matcher("*", Seq(), Seq(RenameAttribute("oldName", "newName")))))
-    val rootMatcher = Matcher("<root>", Seq(rename1))
-    // in DSL this could be: "results" / "*" / rename("oldName", "newName") ~
-    val t = new Transform(rootMatcher)
-
-    // TODO open a stream for reading and one for writing
-
   }
 }

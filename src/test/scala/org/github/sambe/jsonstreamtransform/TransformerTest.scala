@@ -358,6 +358,208 @@ class TransformerTest {
     Assert.assertEquals(expectedJson, outputJson)
   }
 
+  @Test
+  def testInsertLevel1 {
+    val t = /(
+      InsertLevel("personal", Before("name"), After("languages"))
+    ).toTransform
+
+    val expectedJson =
+      """{
+        |  "personal" : {
+        |    "name" : "Samuel",
+        |    "age" : 29,
+        |    "married" : false,
+        |    "languages" : [ "English", "German", "Spanish", "French" ]
+        |  },
+        |  "employer" : {
+        |    "name" : "Leonteq Securities AG",
+        |    "listed" : true,
+        |    "locations" : [ {
+        |      "place" : "Zurich",
+        |      "employees" : 250
+        |    }, {
+        |      "place" : "Hong Kong",
+        |      "employees" : 25
+        |    } ]
+        |  }
+        |}""".stripMargin
+
+    val outputJson = transform(t, inputJson)
+    Assert.assertEquals(expectedJson, outputJson)
+  }
+
+  @Test
+  def testInsertLevel2 {
+    val t = /(
+      "employer" / "locations" / "*" / InsertLevel("branchdata", Start, End),
+      InsertLevel("personaldata", Before("age"), After("languages"))
+    ).toTransform
+
+    val expectedJson =
+      """{
+        |  "name" : "Samuel",
+        |  "personaldata" : {
+        |    "age" : 29,
+        |    "married" : false,
+        |    "languages" : [ "English", "German", "Spanish", "French" ]
+        |  },
+        |  "employer" : {
+        |    "name" : "Leonteq Securities AG",
+        |    "listed" : true,
+        |    "locations" : [ {
+        |      "branchdata" : {
+        |        "place" : "Zurich",
+        |        "employees" : 250
+        |      }
+        |    }, {
+        |      "branchdata" : {
+        |        "place" : "Hong Kong",
+        |        "employees" : 25
+        |      }
+        |    } ]
+        |  }
+        |}""".stripMargin
+
+    val outputJson = transform(t, inputJson)
+    Assert.assertEquals(expectedJson, outputJson)
+  }
+
+  @Test
+  def testInsertLevel3 {
+    val t = /(
+      "employer" / "locations" / "*" / InsertLevel("branchdata", After("place"), Before("employees")),
+      InsertLevel("personaldata", After("name"), Before("employer"))
+    ).toTransform
+
+    val expectedJson =
+      """{
+        |  "name" : "Samuel",
+        |  "personaldata" : {
+        |    "age" : 29,
+        |    "married" : false,
+        |    "languages" : [ "English", "German", "Spanish", "French" ]
+        |  },
+        |  "employer" : {
+        |    "name" : "Leonteq Securities AG",
+        |    "listed" : true,
+        |    "locations" : [ {
+        |      "place" : "Zurich",
+        |      "branchdata" : { },
+        |      "employees" : 250
+        |    }, {
+        |      "place" : "Hong Kong",
+        |      "branchdata" : { },
+        |      "employees" : 25
+        |    } ]
+        |  }
+        |}""".stripMargin
+
+    val outputJson = transform(t, inputJson)
+    Assert.assertEquals(expectedJson, outputJson)
+  }
+
+  @Test
+  def testInsertLevel1Conditionally {
+    val t = new Transform(/(
+      InsertLevel("personal", Before("name"), After("languages"))
+    ).build.copy(condition = Some(_ => true)))
+
+    val expectedJson =
+      """{
+        |  "personal" : {
+        |    "name" : "Samuel",
+        |    "age" : 29,
+        |    "married" : false,
+        |    "languages" : [ "English", "German", "Spanish", "French" ]
+        |  },
+        |  "employer" : {
+        |    "name" : "Leonteq Securities AG",
+        |    "listed" : true,
+        |    "locations" : [ {
+        |      "place" : "Zurich",
+        |      "employees" : 250
+        |    }, {
+        |      "place" : "Hong Kong",
+        |      "employees" : 25
+        |    } ]
+        |  }
+        |}""".stripMargin
+
+    val outputJson = transform(t, inputJson)
+    Assert.assertEquals(expectedJson, outputJson)
+  }
+
+  @Test
+  def testInsertLevel2Conditionally {
+    val t = new Transform(/(
+      "employer" / "locations" / "*" / InsertLevel("branchdata", Start, End),
+      InsertLevel("personaldata", Before("age"), After("languages"))
+    ).build.copy(condition = Some(_ => true)))
+
+    val expectedJson =
+      """{
+        |  "name" : "Samuel",
+        |  "personaldata" : {
+        |    "age" : 29,
+        |    "married" : false,
+        |    "languages" : [ "English", "German", "Spanish", "French" ]
+        |  },
+        |  "employer" : {
+        |    "name" : "Leonteq Securities AG",
+        |    "listed" : true,
+        |    "locations" : [ {
+        |      "branchdata" : {
+        |        "place" : "Zurich",
+        |        "employees" : 250
+        |      }
+        |    }, {
+        |      "branchdata" : {
+        |        "place" : "Hong Kong",
+        |        "employees" : 25
+        |      }
+        |    } ]
+        |  }
+        |}""".stripMargin
+
+    val outputJson = transform(t, inputJson)
+    Assert.assertEquals(expectedJson, outputJson)
+  }
+
+  @Test
+  def testInsertLevel3Conditionally {
+    val t = new Transform(/(
+      "employer" / "locations" / "*" / InsertLevel("branchdata", After("place"), Before("employees")),
+      InsertLevel("personaldata", After("name"), Before("employer"))
+    ).build.copy(condition = Some(_ => true)))
+
+    val expectedJson =
+      """{
+        |  "name" : "Samuel",
+        |  "personaldata" : {
+        |    "age" : 29,
+        |    "married" : false,
+        |    "languages" : [ "English", "German", "Spanish", "French" ]
+        |  },
+        |  "employer" : {
+        |    "name" : "Leonteq Securities AG",
+        |    "listed" : true,
+        |    "locations" : [ {
+        |      "place" : "Zurich",
+        |      "branchdata" : { },
+        |      "employees" : 250
+        |    }, {
+        |      "place" : "Hong Kong",
+        |      "branchdata" : { },
+        |      "employees" : 25
+        |    } ]
+        |  }
+        |}""".stripMargin
+
+    val outputJson = transform(t, inputJson)
+    Assert.assertEquals(expectedJson, outputJson)
+  }
+
   private def transform(t: Transform, json: String): String = {
     val is = new ByteArrayInputStream(json.getBytes("utf-8"))
     val os = new ByteArrayOutputStream()

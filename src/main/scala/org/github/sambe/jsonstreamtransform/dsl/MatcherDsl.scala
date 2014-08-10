@@ -1,6 +1,6 @@
 package org.github.sambe.jsonstreamtransform.dsl
 
-import org.github.sambe.jsonstreamtransform.{Transform, Transformer, Matcher}
+import org.github.sambe.jsonstreamtransform.{Transform, Mutator, Matcher}
 import com.fasterxml.jackson.databind.JsonNode
 
 object MatcherDsl {
@@ -9,8 +9,8 @@ object MatcherDsl {
     MatcherBuilder(path, None)
   }
   
-  implicit def asSpec(transformer: Transformer) = {
-    TransformerBuilder(transformer, None)
+  implicit def asSpec(mutator: Mutator) = {
+    MutatorBuilder(mutator, None)
   }
 
   sealed trait SpecBuilder {
@@ -22,7 +22,7 @@ object MatcherDsl {
     def parentSpec: Option[ParentSpecBuilder]
   }
   
-  case class TransformerBuilder(transformer: Transformer, parentSpec: Option[MatcherBuilder], condition: Option[JsonNode => Boolean] = None) extends SpecBuilder {
+  case class MutatorBuilder(mutator: Mutator, parentSpec: Option[MatcherBuilder], condition: Option[JsonNode => Boolean] = None) extends SpecBuilder {
     def build = {
       val (m, t) = extractSpecBuilder(this)
       Matcher("<root>", m, t, condition)
@@ -72,25 +72,25 @@ object MatcherDsl {
     MatcherBuilder
   }
 
-  private def extractSpecBuilders(specs: Seq[SpecBuilder]): (Seq[Matcher], Seq[Transformer]) = {
+  private def extractSpecBuilders(specs: Seq[SpecBuilder]): (Seq[Matcher], Seq[Mutator]) = {
     specs.map(extractSpecBuilder).unzip match { case (l, r) => (l.flatten.toList, r.flatten.toList)}
   }
 
-  private def extractSpecBuilder(spec: SpecBuilder): (Seq[Matcher], Seq[Transformer]) = {
+  private def extractSpecBuilder(spec: SpecBuilder): (Seq[Matcher], Seq[Mutator]) = {
     spec match {
       case g: GroupMatcherBuilder =>
         val (m, t) = extractSpecBuilders(g.childSpecs)
-        g.parentSpec.map(s => (Seq(createMatcher(s, m, t)), Seq[Transformer]())).getOrElse((m, t))
+        g.parentSpec.map(s => (Seq(createMatcher(s, m, t)), Seq[Mutator]())).getOrElse((m, t))
       case m: MatcherBuilder =>
-        (Seq(createMatcher(m, Seq(), Seq())), Seq[Transformer]()) // this doesn't make much sense (no effect because no transformers or group)
-      case t: TransformerBuilder =>
-        t.parentSpec.map(s => (Seq(createMatcher(s, Seq(), Seq(t.transformer))), Seq())).getOrElse((Seq(), Seq(t.transformer)))
+        (Seq(createMatcher(m, Seq(), Seq())), Seq[Mutator]()) // this doesn't make much sense (no effect because no mutators or group)
+      case t: MutatorBuilder =>
+        t.parentSpec.map(s => (Seq(createMatcher(s, Seq(), Seq(t.mutator))), Seq())).getOrElse((Seq(), Seq(t.mutator)))
     }
   }
   
   // reverses MatcherBuilder chain into matcher chain
-  private def createMatcher(s: MatcherBuilder, childMatchers: Seq[Matcher], transformers: Seq[Transformer]): Matcher = {
-    val m = Matcher(s.pattern, childMatchers, transformers, s.condition)
+  private def createMatcher(s: MatcherBuilder, childMatchers: Seq[Matcher], mutators: Seq[Mutator]): Matcher = {
+    val m = Matcher(s.pattern, childMatchers, mutators, s.condition)
     s.parentSpec.map(createMatcher(_, Seq(m), Seq())).getOrElse(m)
   }
 }

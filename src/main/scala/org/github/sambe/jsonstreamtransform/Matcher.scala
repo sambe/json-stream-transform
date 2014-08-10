@@ -5,7 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode
 case class Matcher(
   pattern: String,
   subMatchers: Seq[Matcher],
-  transformers: Seq[Transformer] = Seq(),
+  mutators: Seq[Mutator] = Seq(),
   condition: Option[JsonNode => Boolean] = None)
 
 // as soon as there is a matcher with condition in the matcher tree, it will trigger fetching the value of the matched
