@@ -1,5 +1,10 @@
 # Transforming JSON Stream-Based
 
+Json-stream-transform is a Scala-based library to apply changes to the structure of a JSON document, while streaming it
+from an input to an output stream. It is an ideal basis to implement an automated migration for JSON documents in any
+system using Scala. There is also a Scala-based DSL for specifying the structural changes in a self-documenting,
+declarative style.
+
 ## Does the following apply to you?
 - You have persisted JSON data and you'd like to migrate it along with the application?
 - Simple solutions don't work because some of the JSON documents are too big to keep in memory?
