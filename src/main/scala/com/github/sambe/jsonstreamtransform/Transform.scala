@@ -292,7 +292,7 @@ class Transform(matcher: Matcher) {
 
       val v = an.get(index)
       val updated = transformObjectTree(m)(v)
-      if (updated != m)
+      if (updated != v)
         an.set(index, updated)
       an
     } else an
